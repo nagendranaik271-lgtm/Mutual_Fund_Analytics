@@ -1,98 +1,119 @@
+from pathlib import Path
 import pandas as pd
-import os
 
-input_file=os.path.join("data","raw","02_nav_history.csv")
-
-df=pd.read_csv(input_file)
-
-print(df.head())
-
-print(df.shape)
-print(df.dtypes)
-
-df["date"] = pd.to_datetime(df["date"])
-
-print(df["date"].head(10))
-print(df["date"].dtype)
+PROJECT_ROOT = Path(__file__).resolve().parent
+RAW_DIR = PROJECT_ROOT / "data" / "raw"
+PROCESSED_DIR = PROJECT_ROOT / "data" / "processed"
 
 
-df=df.sort_values(by=["amfi_code","date"])
-print(df[["amfi_code","date"]].head(15))
+def clean_nav():
+    """Clean NAV history and save the processed dataset."""
+    input_file = RAW_DIR / "02_nav_history.csv"
+    output_file = PROCESSED_DIR / "02_nav_history_cleaned.csv"
 
-print(df["nav"].isnull().sum())
+    df = pd.read_csv(input_file)
 
-df["nav"]= df.groupby("amfi_code")["nav"].ffill()
-print(df["nav"].isnull().sum())
+    df["date"] = pd.to_datetime(df["date"])
+    df["nav"] = pd.to_numeric(df["nav"], errors="coerce")
 
-print(df.duplicated().sum())
+    df = df.sort_values(["amfi_code", "date"])
 
-invalid_nav = df[df["nav"] <= 0]
-print(len(invalid_nav))
+    cleaned_groups = []
 
-os.makedirs("data/processes", exist_ok=True)
-output_file = os.path.join("data", "processed", "02_nav_history_cleaned.csv")
-df.to_csv(output_file, index=False)
-print("\nCleaned file saved successfully!")
+    for amfi_code, group in df.groupby("amfi_code"):
+        group = group.set_index("date")
 
+        full_dates = pd.date_range(
+            start=group.index.min(),
+            end=group.index.max(),
+            freq="D"
+        )
 
+        group = group.reindex(full_dates)
+        group["amfi_code"] = amfi_code
+        group["nav"] = group["nav"].ffill()
 
-# ============================================================================================================
+        group.index.name = "date"
+        group = group.reset_index()
 
-input_file = os.path.join("data", "raw", "08_investor_transactions.csv")
+        cleaned_groups.append(group)
 
-df = pd.read_csv(input_file)
-print(df.head())
-print(df.dtypes)
-print(df.shape)
+    df = pd.concat(cleaned_groups, ignore_index=True)
 
-print(df["transaction_type"].unique())
+    df = df[["amfi_code", "date", "nav"]]
+    df = df.drop_duplicates()
 
-print((df["amount_inr"] <= 0).sum())
-df["transaction_date"] = pd.to_datetime(df["transaction_date"])
-print(df["transaction_date"].dtype)
+    df.to_csv(output_file, index=False)
 
-print(df["kyc_status"].unique())
-
-output_file = os.path.join("data","processed","08_investor_transactions_cleaned.csv")
-df.to_csv(output_file, index=False)
-
-print("Investor Transactions cleaned and saved!")
-
-
-# ===================================================================================================
+    print(f"NAV cleaned: {len(df):,} rows")
 
 
-# =====================================
-# Task 3: Clean scheme_performance.csv
-# =====================================
+def clean_transactions():
+    """Clean investor transactions."""
+    input_file = RAW_DIR / "08_investor_transactions.csv"
+    output_file = PROCESSED_DIR / "08_investor_transactions_cleaned.csv"
 
-input_file = os.path.join("data", "raw", "07_scheme_performance.csv")
+    df = pd.read_csv(input_file)
 
-df = pd.read_csv(input_file)
+    df["transaction_date"] = pd.to_datetime(
+        df["transaction_date"],
+        errors="coerce"
+    )
 
-print(df.head())
-print(df.dtypes)
-print(df.shape)
+    df["amount_inr"] = pd.to_numeric(
+        df["amount_inr"],
+        errors="coerce"
+    )
 
-print(df.columns)
+    df.to_csv(output_file, index=False)
 
-print(df[["return_1yr_pct", "return_3yr_pct", "return_5yr_pct"]].dtypes)
+    print(f"Transactions cleaned: {len(df):,} rows")
 
-df["return_1yr_pct"] = pd.to_numeric(df["return_1yr_pct"], errors="coerce")
-df["return_3yr_pct"] = pd.to_numeric(df["return_3yr_pct"], errors="coerce")
-df["return_5yr_pct"] = pd.to_numeric(df["return_5yr_pct"], errors="coerce")
 
-print("1 Year :", df["return_1yr_pct"].isna().sum())
-print("3 Year :", df["return_3yr_pct"].isna().sum())
-print("5 Year :", df["return_5yr_pct"].isna().sum())
+def clean_performance():
+    """Clean scheme performance data."""
+    input_file = RAW_DIR / "07_scheme_performance.csv"
+    output_file = PROCESSED_DIR / "07_scheme_performance_cleaned.csv"
 
-invalid_expense = df[
-    (df["expense_ratio_pct"] < 0.1) |
-    (df["expense_ratio_pct"] > 2.5)
-]
-print(len(invalid_expense))
+    df = pd.read_csv(input_file)
 
-output_file = os.path.join("data","processed","07_scheme_performance_cleaned.csv"
-)
-df.to_csv(output_file, index=False)
-print("Scheme Performance cleaned and saved!")
+    numeric_columns = [
+        "return_1yr_pct",
+        "return_3yr_pct",
+        "return_5yr_pct",
+        "benchmark_3yr_pct",
+        "alpha",
+        "beta",
+        "sharpe_ratio",
+        "sortino_ratio",
+        "std_dev_ann_pct",
+        "max_drawdown_pct",
+        "aum_crore",
+        "expense_ratio_pct"
+    ]
+
+    for column in numeric_columns:
+        if column in df.columns:
+            df[column] = pd.to_numeric(
+                df[column],
+                errors="coerce"
+            )
+
+    df.to_csv(output_file, index=False)
+
+    print(f"Performance cleaned: {len(df):,} rows")
+
+
+def main():
+    """Run all data-cleaning tasks."""
+    PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
+
+    clean_nav()
+    clean_transactions()
+    clean_performance()
+
+    print("\nData cleaning completed successfully!")
+
+
+if __name__ == "__main__":
+    main()
